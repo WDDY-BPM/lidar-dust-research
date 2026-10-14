@@ -39,6 +39,7 @@ def main(args):
                       export_per_sensor=args.visualize_per_sensor)
     report.update(split=args.split, checkpoint_epoch=checkpoint["epoch"] + 1,
                   checkpoint_source=config["source"], training_seed=config["seed"],
+                  training_config=config, training_budget_epochs=checkpoint["training_budget_epochs"],
                   is_smoke_run=config["is_smoke_run"] or args.max_frames is not None,
                   checkpoint_selection="validation F1 at checkpoint's fixed threshold")
     write_json(output / "metrics.json", report)

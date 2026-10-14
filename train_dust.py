@@ -160,6 +160,7 @@ def train(args):
             if score > best or not (output / "best.pt").exists():
                 best, is_best = score, True
         state = {"format_version": 1, "epoch": epoch, "best_val_f1": best, "config": config,
+                 "training_budget_epochs": args.epochs,
                  "model_state": model.state_dict(), "optimizer_state": optimizer.state_dict(),
                  "scheduler_state": scheduler.state_dict(), "rng_state": rng_state(generator),
                  "manifest": manifest}

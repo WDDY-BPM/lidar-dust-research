@@ -55,6 +55,8 @@ def predict_frame(model, points, record, manifest, device, batch_size=4, seed=42
         array = np.stack([p[0] for p in pending])
         tensor = torch.from_numpy(array).transpose(1, 2).to(device)
         log_probability, _ = model(tensor)
+        if not torch.isfinite(log_probability).all():
+            raise RuntimeError("Non-finite model prediction, including ignored context points")
         scores = log_probability[:, :, 1].exp().cpu().numpy()
         for score, (_, indices, real_count) in zip(scores, pending):
             real = indices[:real_count]

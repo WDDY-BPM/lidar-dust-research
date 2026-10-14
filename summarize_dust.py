@@ -19,9 +19,13 @@ def summarize_runs(paths):
     if len(set(seeds)) != len(seeds):
         raise ValueError("Training seeds must be distinct")
     for key in ("manifest_fingerprint", "threshold", "frames", "checkpoint_source",
-                "evaluation_seed", "evaluation_batch_size"):
+                "evaluation_seed", "evaluation_batch_size", "training_budget_epochs"):
         if any(r[key] != reports[0][key] for r in reports):
             raise ValueError(f"Runs use incompatible {key}")
+    configurations = [{k: v for k, v in r["training_config"].items() if k != "seed"}
+                      for r in reports]
+    if any(c != configurations[0] for c in configurations):
+        raise ValueError("Training configurations differ beyond the random seed")
     result = {"seeds": seeds, "n_runs": len(reports),
               "manifest_fingerprint": reports[0]["manifest_fingerprint"],
               "threshold": reports[0]["threshold"], "metrics": {}}

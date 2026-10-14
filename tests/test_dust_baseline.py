@@ -1,6 +1,7 @@
 """Synthetic software checks; no dataset downloads or research experiments."""
 
 import argparse
+import copy
 import json
 from pathlib import Path
 import tempfile
@@ -22,6 +23,7 @@ from models.pointnet2_utils import square_distance
 from prepare_dust import assign_splits, prepare
 from train_dust import train
 from evaluate_dust import main as evaluate_main
+from summarize_dust import summarize_runs
 
 
 class ConstantDust(torch.nn.Module):
@@ -215,6 +217,30 @@ class BaselineTests(unittest.TestCase):
         self.assertTrue(torch.all(distance >= 0))
         reference = ((xyz[:, :, None] - xyz[:, None, :])**2).sum(-1)
         torch.testing.assert_close(distance, reference, rtol=1e-5, atol=.02)
+
+    def test_summary_rejects_different_training_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = []
+            template = {"split": "test", "is_smoke_run": False, "manifest_fingerprint": "same",
+                        "threshold": .5, "frames": 20, "checkpoint_source": {"commit": "same"},
+                        "evaluation_seed": 42, "evaluation_batch_size": 4, "training_budget_epochs": 100,
+                        "overall": {"f1": .8, "precision": .7, "recall": .9,
+                                    "dust_iou": .6, "false_deletion_rate": .01}}
+            for seed in (42, 43, 44):
+                report = copy.deepcopy(template)
+                report["training_seed"] = seed
+                report["training_config"] = {"seed": seed, "lr": .001}
+                path = Path(directory) / f"seed{seed}.json"
+                path.write_text(json.dumps(report))
+                paths.append(path)
+            result = summarize_runs(paths)
+            self.assertAlmostEqual(result["metrics"]["f1"]["mean"], .8)
+            self.assertAlmostEqual(result["metrics"]["f1"]["sample_std"], 0.)
+            changed = json.loads(paths[0].read_text())
+            changed["training_config"]["lr"] = .01
+            paths[0].write_text(json.dumps(changed))
+            with self.assertRaises(ValueError):
+                summarize_runs(paths)
 
     def test_real_msg_shape_and_backward_and_s3dis_default(self):
         self.assertEqual(OriginalMSG(13).sa1.conv_blocks[0][0].in_channels, 12)
