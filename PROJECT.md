@@ -6,7 +6,8 @@
 
 - 初始源码来自 https://github.com/yanx27/Pointnet_Pointnet2_pytorch ，版本 `eb64fe0b4c24055559cea26299cb485dcb43d8dd`。
 - 导入该版本的源码快照，保留原 README 和 MIT LICENSE；未导入上游 log 目录中的权重、日志及模型副本，未导入上游提交历史。
-- 尚未适配 LiDARDustX 加载、二分类训练与整帧评价。原始 train_semseg.py 仍是 S3DIS 流程。
+- 新增 LiDARDustX 数据核验、固定划分、PointNet++ MSG 二分类训练与整帧评价入口，使用方法见 [BASELINE.md](BASELINE.md)。原始 train_semseg.py 仍是 S3DIS 流程。
+- 当前为基线实现；真实数据训练和指标需在实验服务器上验证，不代表已复现出实验结果。
 - 数据集在仓库外管理，不上传到 GitHub。不在本机开展实验。
 
 ## 分支与审阅

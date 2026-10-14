@@ -37,7 +37,9 @@ def square_distance(src, dst):
     dist = -2 * torch.matmul(src, dst.permute(0, 2, 1))
     dist += torch.sum(src ** 2, -1).view(B, N, 1)
     dist += torch.sum(dst ** 2, -1).view(B, 1, M)
-    return dist
+    # Roundoff in the dot-product identity can otherwise produce negative
+    # squared distances and unstable inverse-distance interpolation weights.
+    return dist.clamp_min(0.0)
 
 
 def index_points(points, idx):
