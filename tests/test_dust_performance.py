@@ -8,6 +8,7 @@ import signal
 from pathlib import Path
 import tempfile
 import unittest
+import warnings
 from unittest.mock import patch
 
 import numpy as np
@@ -201,8 +202,10 @@ class PerformanceTests(unittest.TestCase):
                 args.resume = str(work / "run" / "last.pt")
                 def forbidden_step(optimizer, *a, **kw):
                     raise AssertionError("Must not retrain")
-                with patch.object(torch.optim.Adam, "step", forbidden_step):
+                with patch.object(torch.optim.Adam, "step", forbidden_step), warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always")
                     train(args)
+                self.assertFalse(any("lr_scheduler.step()" in str(w.message) for w in caught))
                 args.resume, args.output = None, str(work / "full")
                 train(args)
             resumed = torch.load(work / "run" / "last.pt", weights_only=False)

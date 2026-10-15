@@ -166,6 +166,11 @@ def train(args):
         scheduler.load_state_dict(checkpoint["scheduler_state"])
         restore_rng(checkpoint["rng_state"], generator)
         start, start_batch = checkpoint["next_epoch"], checkpoint["next_batch"]
+        if start_batch:
+            # LambdaLR tracks this non-serialized flag on its optimizer. A
+            # validation-only retry has already committed optimizer steps in a
+            # previous process, so its first scheduler step is not premature.
+            optimizer._opt_called = True
         best = checkpoint["best_val_f1"]
         saved_stats, saved_seconds = checkpoint["epoch_statistics"], checkpoint["epoch_train_seconds"]
         history_row = checkpoint.get("history_row")
