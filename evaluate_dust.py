@@ -18,7 +18,7 @@ def main(args):
     manifest = read_manifest(args.manifest)
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     config = checkpoint["config"]
-    if checkpoint["format_version"] != 1 or manifest["fingerprint"] != config["manifest_fingerprint"]:
+    if checkpoint["format_version"] not in (1, 2) or manifest["fingerprint"] != config["manifest_fingerprint"]:
         raise ValueError("Checkpoint and evaluation manifest differ")
     if config["is_smoke_run"] and not args.allow_smoke:
         raise ValueError("Smoke checkpoint: pass --allow-smoke for pipeline checks only")

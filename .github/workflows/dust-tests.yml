@@ -7,7 +7,7 @@ on:
       - 'dust/**'
       - '*_dust.py'
       - 'models/pointnet2*'
-      - 'tests/test_dust_baseline.py'
+      - 'tests/test_dust*.py'
       - 'requirements-dust.txt'
       - '.github/workflows/dust-tests.yml'
   pull_request:
@@ -15,7 +15,7 @@ on:
       - 'dust/**'
       - '*_dust.py'
       - 'models/pointnet2*'
-      - 'tests/test_dust_baseline.py'
+      - 'tests/test_dust*.py'
       - 'requirements-dust.txt'
       - '.github/workflows/dust-tests.yml'
   workflow_dispatch:
@@ -44,4 +44,4 @@ jobs:
         env:
           OMP_NUM_THREADS: '1'
           MKL_NUM_THREADS: '1'
-        run: python -m unittest discover -s tests -p 'test_dust_baseline.py' -v
+        run: python -m unittest discover -s tests -p 'test_dust*.py' -v

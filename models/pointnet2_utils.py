@@ -55,13 +55,12 @@ def index_points(points, idx):
     B = points.shape[0]
     view_shape = list(idx.shape)
     view_shape[1:] = [1] * (len(view_shape) - 1)
-    repeat_shape = list(idx.shape)
-    repeat_shape[0] = 1
-    batch_indices = torch.arange(B, dtype=torch.long).to(device).view(view_shape).repeat(repeat_shape)
+    batch_indices = torch.arange(B, dtype=torch.long, device=device).view(view_shape)
     new_points = points[batch_indices, idx, :]
     return new_points
 
 
+@torch.no_grad()
 def farthest_point_sample(xyz, npoint):
     """
     Input:
@@ -72,16 +71,19 @@ def farthest_point_sample(xyz, npoint):
     """
     device = xyz.device
     B, N, C = xyz.shape
-    centroids = torch.zeros(B, npoint, dtype=torch.long).to(device)
-    distance = torch.ones(B, N).to(device) * 1e10
+    centroids = torch.zeros(B, npoint, dtype=torch.long, device=device)
+    distance = torch.full((B, N), 1e10, device=device)
+    # Keep the original CPU RNG draw so fixed seeds retain their FPS starts.
     farthest = torch.randint(0, N, (B,), dtype=torch.long).to(device)
-    batch_indices = torch.arange(B, dtype=torch.long).to(device)
+    batch_indices = torch.arange(B, dtype=torch.long, device=device)
     for i in range(npoint):
         centroids[:, i] = farthest
         centroid = xyz[batch_indices, farthest, :].view(B, 1, 3)
         dist = torch.sum((xyz - centroid) ** 2, -1)
-        mask = dist < distance
-        distance[mask] = dist[mask]
+        # Boolean gathering creates variable-size intermediates on CUDA. A
+        # fixed-shape update avoids those synchronization points, including
+        # their cost at every one of the 1024/256/64/16 sampling iterations.
+        distance = torch.where(dist < distance, dist, distance)
         farthest = torch.max(distance, -1)[1]
     return centroids
 
@@ -99,14 +101,13 @@ def query_ball_point(radius, nsample, xyz, new_xyz):
     device = xyz.device
     B, N, C = xyz.shape
     _, S, _ = new_xyz.shape
-    group_idx = torch.arange(N, dtype=torch.long).to(device).view(1, 1, N).repeat([B, S, 1])
+    group_idx = torch.arange(N, dtype=torch.long, device=device).view(1, 1, N)
     sqrdists = square_distance(new_xyz, xyz)
-    group_idx[sqrdists > radius ** 2] = N
-    group_idx = group_idx.sort(dim=-1)[0][:, :, :nsample]
-    group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, nsample])
-    mask = group_idx == N
-    group_idx[mask] = group_first[mask]
-    return group_idx
+    group_idx = torch.where(sqrdists > radius ** 2, N, group_idx)
+    # Select the same smallest *input indices* as the original sort. Selecting
+    # nearest distances instead would change the neighborhood protocol.
+    group_idx = group_idx.topk(min(nsample, N), dim=-1, largest=False, sorted=True).values
+    return torch.where(group_idx == N, group_idx[:, :, :1], group_idx)
 
 
 def sample_and_group(npoint, radius, nsample, xyz, points, returnfps=False):

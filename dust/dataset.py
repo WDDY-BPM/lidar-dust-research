@@ -45,9 +45,14 @@ class DustDataset(Dataset):
         return self.cache[key]
 
     def __getitem__(self, index):
+        # Epoch travels with the task sent to a worker. Persistent workers must
+        # not depend on a main-process attribute that they cannot observe.
+        epoch = self.epoch
+        if isinstance(index, tuple):
+            epoch, index = index
         record = self.frames[index // self.samples_per_frame]
         points, target, supervised = self._frame(record)
-        rng = np.random.default_rng(np.random.SeedSequence([self.seed, self.epoch, index]))
+        rng = np.random.default_rng(np.random.SeedSequence([self.seed, epoch, index]))
         geometry = self.manifest["geometry"]
         anchor = int(rng.choice(supervised))
         half = geometry["block_size"] / 2

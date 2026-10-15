@@ -12,6 +12,10 @@ from dust.data import (IGNORE, KEEP_IDS, evaluation_blocks, features, finite_fra
 from dust.metrics import confusion, summarize
 
 
+class EvaluationInterrupted(InterruptedError):
+    """A cooperative stop requested between prediction batches."""
+
+
 def select_frames(manifest, split, limit=None, seed=42):
     records = [r for r in manifest["frames"] if r["split"] == split]
     if limit is None:
@@ -40,7 +44,8 @@ def verify_records(root, records):
             print(f"Verified content hashes {i + 1}/{len(records)}", flush=True)
 
 
-def predict_frame(model, points, record, manifest, device, batch_size=4, seed=42):
+def predict_frame(model, points, record, manifest, device, batch_size=4, seed=42,
+                  should_stop=None):
     if batch_size < 1:
         raise ValueError("Evaluation batch size must be positive")
     sums = np.zeros(len(points), dtype=np.float64)
@@ -52,6 +57,8 @@ def predict_frame(model, points, record, manifest, device, batch_size=4, seed=42
     def flush():
         if not pending:
             return
+        if should_stop is not None and should_stop():
+            raise EvaluationInterrupted("Validation interrupted; retry this validation on resume")
         array = np.stack([p[0] for p in pending])
         tensor = torch.from_numpy(array).transpose(1, 2).to(device)
         log_probability, _ = model(tensor)
@@ -131,7 +138,7 @@ def export_frame(directory, record, raw, labels, finite_index, target, scores, t
 
 
 def evaluate(model, root, manifest, records, device, threshold=.5, batch_size=4,
-             seed=42, output=None, export_per_sensor=0):
+             seed=42, output=None, export_per_sensor=0, should_stop=None):
     if not records or not 0 < threshold < 1 or export_per_sensor < 0:
         raise ValueError("Need frames, 0 < threshold < 1 and nonnegative export count")
     model.eval()
@@ -143,9 +150,12 @@ def evaluate(model, root, manifest, records, device, threshold=.5, batch_size=4,
     exported = defaultdict(int)
     rows = []
     for i, record in enumerate(records):
+        if should_stop is not None and should_stop():
+            raise EvaluationInterrupted("Validation interrupted")
         raw, labels = load_frame(root, record)
         points, target, original_index = finite_frame(raw, labels)
-        probability, votes = predict_frame(model, points, record, manifest, device, batch_size, seed)
+        probability, votes = predict_frame(model, points, record, manifest, device, batch_size, seed,
+                                           should_stop=should_stop)
         counts = confusion(target, probability, threshold)
         total += counts
         by_sensor[record["sensor"]] += counts

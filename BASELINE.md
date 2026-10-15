@@ -2,6 +2,8 @@
 
 本版实现我们约定的粉尘过滤基线：XYZI 输入，逐点预测有效点与粉尘，输出 F1、误删率和 PLY 可视化。它是基于 yanx27 源码的实验协议，未声称复现某篇论文的官方训练配置或指标。结构预测、保护损失和修复模块留到后续阶段。
 
+更新：分支 `fix/msg-throughput-resume` 提供 FPS/邻域查询优化、短时吞吐量比较、轮内检查点及安全停止。AutoDL 离线更新、现有 `mc` 环境和断点重训命令见 [PERFORMANCE.md](PERFORMANCE.md)。本页保留第一版操作示例；新版恢复语义以下文更新及 PERFORMANCE.md 为准。
+
 以下命令全部在实验服务器运行。本机不运行训练、推理或实验性预处理。GitHub 自动检查使用合成数据验证软件逻辑，不下载真实数据集。
 
 ## 1. 获取代码和建立环境
@@ -14,7 +16,7 @@ source .venv/bin/activate
 python -m pip install -r requirements-dust.txt
 # 示例：选择与服务器驱动兼容的 CUDA 11.8 wheel。
 python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu118
-python -m unittest discover -s tests -p 'test_dust_baseline.py' -v
+python -m unittest discover -s tests -p 'test_dust*.py' -v
 ```
 
 PyTorch 2.5.1 提供 cu118、cu121、cu124 和 CPU wheel，参见 [官方安装说明](https://pytorch.org/get-started/previous-versions/#v251)。选择具体 CUDA wheel 前核对服务器驱动。仅运行服务器上的 CPU 软件检查时，可将安装 URL 换成 `https://download.pytorch.org/whl/cpu`。推荐 Python 3.10、NumPy 1.26.4；不依赖 torchvision、Open3D 或自定义 CUDA 编译。
@@ -98,7 +100,7 @@ CUDA_VISIBLE_DEVICES=0 python train_dust.py \
 
 默认 Adam，初始学习率 0.001，weight decay 0.0001；每 10 epochs 学习率乘 0.7，下限 0.00001。每 5 epochs 及最后一轮在**全部验证帧**上整帧评价，按固定阈值 0.5 的验证 F1 保存 `best.pt`，每轮保存 `last.pt`。测试集不参与权重计算、选模或阈值选择。
 
-`config.json` 记录协议指纹、源码 commit、超参和软件环境；`history.jsonl` 记录训练损失、学习率和验证指标。每次验证生成独立结果目录。NumPy/Python/PyTorch、采样器和 CUDA 随机状态保存到 checkpoint，支持在 epoch 边界恢复：
+`config.json` 记录协议指纹、源码 commit、超参和软件环境；`history.jsonl` 记录训练损失、学习率、验证指标以及训练/验证耗时。每次验证生成独立结果目录。新版默认每 100 个 batch、验证前及 epoch 结束保存 `last.pt`，并在 `Ctrl+C`/SIGTERM 后完成当前批次再保存。检查点包含已提交批次位置和 NumPy/Python/PyTorch/CUDA 随机状态，支持从轮内下一批恢复：
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python train_dust.py \
