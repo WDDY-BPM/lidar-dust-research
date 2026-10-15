@@ -74,7 +74,7 @@ CUDA_VISIBLE_DEVICES=0 python -u train_dust.py \
   --output runs/msg_fast_seed42 --seed 42 --epochs 100 \
   --batch-size 8 --workers 4 --cache-frames 16 \
   --save-every-steps 50 --log-every 25 --stop-after-steps 50 \
-  2>&1 | tee logs/msg_fast_seed42_first50.log
+  2>&1 | tee -i logs/msg_fast_seed42_first50.log
 ```
 
 50 步后正常保存 `runs/msg_fast_seed42/last.pt` 并退出；它是总预算为 100 轮的新训练的前 50 步，不是丢弃后重新训练的独立 smoke 实验。此时没有经过验证，通常还没有 `best.pt`。
@@ -91,11 +91,12 @@ CUDA_VISIBLE_DEVICES=0 python -u train_dust.py \
   --batch-size 8 --workers 4 --cache-frames 16 \
   --save-every-steps 50 --log-every 25 \
   --resume runs/msg_fast_seed42/last.pt \
-  2>&1 | tee -a logs/msg_fast_seed42.log
+  2>&1 | tee -i -a logs/msg_fast_seed42.log
 ```
 
 - `last.pt` 保存模型、Adam、学习率调度器、随机状态、已提交批次位置、部分轮的累计损失及训练时间。预取中的批次不计作完成；恢复时重新生成同一轮顺序，直接从下一批开始，不重新读取并丢弃前面所有样本。
 - 新版按 `Ctrl+C` 或收到 SIGTERM 后，完成当前训练批次并保存再退出。避免连续发送信号或 `kill -9`；强制关机、掉电等最多恢复到最近一次成功保存的位置。临时文件写完后原子替换，原检查点不会在写入途中被覆盖。
+- 命令中的 `tee -i` 让日志进程忽略 SIGINT，避免 `Ctrl+C` 时它先退出、训练进程向已关闭管道输出。也可直接在 tmux 内运行 Python，不接 tee。
 - 验证前另存 `last.pt`。验证中断时，恢复会跳过该轮训练、重新完成该次完整验证，再推进学习率和 epoch；不把部分验证当作选模结果。
 - `best.pt` 仍只由完整验证 F1 选择。history 写入中断时，以检查点中的提交位置和最后一条记录恢复，避免重复行。
 - 保持同一源码 commit、manifest、batch size、seed 和训练/验证配置。workers、cache、日志和保存频率可以调整；epoch 可延长，但最终三种子汇总前必须统一预算。

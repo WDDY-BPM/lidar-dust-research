@@ -236,6 +236,10 @@ def train(args):
                 print("Stop requested; checkpoint saved before the next batch.", flush=True)
                 return
             for points, target in loader:
+                if stop():
+                    atomic_checkpoint(output / "last.pt", snapshot(epoch, cursor))
+                    print("Stop requested; checkpoint saved before the next optimizer step.", flush=True)
+                    return
                 inputs = points.to(device, dtype=torch.float32, non_blocking=True).transpose(1, 2)
                 target = target.to(device, dtype=torch.long, non_blocking=True)
                 optimizer.zero_grad(set_to_none=True)
@@ -260,13 +264,15 @@ def train(args):
                     elapsed = max(perf_counter() - window_clock, 1e-9)
                     batch_seconds = elapsed / max(cursor - window_batch, 1)
                     avg_loss = state["epoch_statistics"][0] / state["epoch_statistics"][1]
+                    if periodic or stopping:
+                        # Save before logging: a closed output pipe must not
+                        # discard the just-committed batch on a stop request.
+                        atomic_checkpoint(output / "last.pt", state)
                     print(f"Epoch {epoch + 1}/{args.epochs} step {cursor}/{sampler.total_batches} "
                           f"loss={avg_loss:.6f} s/batch={batch_seconds:.3f} "
                           f"samples/s={window_samples / elapsed:.2f} "
                           f"train_ETA_min={(sampler.total_batches - cursor) * batch_seconds / 60:.1f}", flush=True)
                     window_clock, window_batch, window_samples = perf_counter(), cursor, 0
-                    if periodic or stopping:
-                        atomic_checkpoint(output / "last.pt", state)
                 if stopping:
                     print(f"Stopped safely. Resume from {output / 'last.pt'} (next batch {cursor + 1}).", flush=True)
                     return
