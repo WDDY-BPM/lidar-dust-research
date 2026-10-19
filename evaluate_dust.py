@@ -9,7 +9,7 @@ import torch
 from dust.data import read_manifest, write_json
 from dust.evaluation import evaluate, select_frames, verify_records
 from models.pointnet2_dust_msg import get_model
-from train_dust import device_for, seed_everything
+from train_dust import device_for, seed_everything, source_version
 
 
 def main(args):
@@ -36,11 +36,14 @@ def main(args):
     report = evaluate(model, args.data_root, manifest, records, device,
                       threshold=config["threshold"], batch_size=config["eval_batch_size"],
                       seed=config["evaluation_seed"], output=output,
-                      export_per_sensor=args.visualize_per_sensor)
+                      export_per_sensor=args.visualize_per_sensor,
+                      backend=getattr(args, "backend", "eager"))
     report.update(split=args.split, checkpoint_epoch=checkpoint["epoch"] + 1,
                   checkpoint_source=config["source"], training_seed=config["seed"],
                   training_config=config, training_budget_epochs=checkpoint["training_budget_epochs"],
                   is_smoke_run=config["is_smoke_run"] or args.max_frames is not None,
+                  resume_lineage=checkpoint.get("resume_lineage", []),
+                  evaluation_source=source_version(),
                   checkpoint_selection="validation F1 at checkpoint's fixed threshold")
     write_json(output / "metrics.json", report)
     print(json.dumps(report["overall"], indent=2), flush=True)
@@ -54,6 +57,7 @@ def parse_args():
     parser.add_argument("--output", required=True)
     parser.add_argument("--split", choices=("val", "test"), default="test")
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--backend", choices=("eager", "cuda-graph"), default="eager")
     parser.add_argument("--max-frames", type=int)
     parser.add_argument("--visualize-per-sensor", type=int, default=1)
     parser.add_argument("--allow-smoke", action="store_true")

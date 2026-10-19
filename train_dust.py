@@ -17,6 +17,7 @@ from dust.data import IGNORE, file_sha256, read_manifest, write_json
 from dust.dataset import DustDataset
 from dust.evaluation import EvaluationInterrupted, evaluate, select_frames, verify_records
 from dust.training import EpochBatchSampler, StopRequest, initialize_worker
+from dust.resume import validate_resume_config
 from models.pointnet2_dust_msg import get_model
 
 
@@ -114,9 +115,13 @@ def train(args):
     prefetch = getattr(args, "prefetch_factor", 2)
     stop_after = getattr(args, "stop_after_steps", None)
     init_path = getattr(args, "init_checkpoint", None)
+    eval_backend = getattr(args, "eval_backend", "eager")
+    evaluation_update = getattr(args, "resume_evaluation_update", False)
     if (save_every < 1 or log_every < 1 or cache_frames < 0 or prefetch < 1 or
             (stop_after is not None and stop_after < 1) or (args.resume and init_path)):
         raise ValueError("Invalid checkpoint/loader settings or conflicting resume/init options")
+    if eval_backend not in ("eager", "cuda-graph") or (evaluation_update and not args.resume):
+        raise ValueError("Invalid evaluation backend or evaluation update without --resume")
     manifest = read_manifest(args.manifest)
     output = Path(args.output)
     if args.resume is None and output.exists() and any(output.iterdir()):
@@ -126,6 +131,8 @@ def train(args):
     output.mkdir(parents=True, exist_ok=True)
     seed_everything(args.seed)
     device = device_for(args.device)
+    if eval_backend == "cuda-graph" and device.type != "cuda":
+        raise ValueError("cuda-graph evaluation requires CUDA")
     dataset = DustDataset(args.data_root, manifest, args.samples_per_frame, args.seed,
                           max_frames=args.max_train_frames, augment=not args.no_augment,
                           cache_frames=cache_frames)
@@ -153,14 +160,14 @@ def train(args):
               "training_order": "epoch_permutation_v1", "initialization": None}
     start, start_batch, best = 0, 0, -1.
     saved_stats, saved_seconds, history_row = [0., 0.], 0., None
+    resume_lineage = []
     if args.resume:
         checkpoint = torch.load(args.resume, map_location="cpu", weights_only=False)
         if checkpoint["format_version"] != 2:
             raise ValueError("Old checkpoint: use the original code to resume, or --init-checkpoint "
                              "in a NEW output directory to initialize weights with a fresh optimizer")
         config["initialization"] = checkpoint["config"].get("initialization")
-        if checkpoint["config"] != config:
-            raise ValueError("Resume config/source/manifest differs from checkpoint")
+        resume_lineage = validate_resume_config(checkpoint, config, args.resume, evaluation_update)
         model.load_state_dict(checkpoint["model_state"])
         optimizer.load_state_dict(checkpoint["optimizer_state"])
         scheduler.load_state_dict(checkpoint["scheduler_state"])
@@ -192,6 +199,7 @@ def train(args):
                                     "mode": "weights_only_fresh_optimizer"}
         print("Initialized model weights only; optimizer, scheduler, epoch and best F1 start fresh.", flush=True)
     write_json(output / "config.json", {**config, "epochs_requested": args.epochs,
+               "eval_backend": eval_backend, "resume_lineage": resume_lineage,
                "workers": args.workers, "cache_frames": cache_frames, "prefetch_factor": prefetch,
                "save_every_steps": save_every, "log_every": log_every,
                "device": str(device), "geometry": manifest["geometry"],
@@ -230,6 +238,7 @@ def train(args):
                         "training_budget_epochs": args.epochs, "model_state": model.state_dict(),
                         "optimizer_state": optimizer.state_dict(), "scheduler_state": scheduler.state_dict(),
                         "rng_state": rng_state(generator), "manifest": manifest,
+                        "eval_backend": eval_backend, "resume_lineage": resume_lineage,
                         "epoch_statistics": values if next_batch else [0., 0.],
                         "epoch_train_seconds": seconds_before + perf_counter() - epoch_clock if next_batch else 0.,
                         "history_row": history_row if row is None else row, "best_pending": best_pending}
@@ -293,11 +302,13 @@ def train(args):
                     validation_report = evaluate(model, args.data_root, manifest, validation, device,
                                                  threshold=args.threshold, batch_size=args.eval_batch_size,
                                                  seed=42, output=output / "validation" / f"epoch_{epoch + 1:04d}",
-                                                 should_stop=stop)
+                                                 should_stop=stop, backend=eval_backend)
                 except EvaluationInterrupted:
                     atomic_checkpoint(output / "last.pt", snapshot(epoch, cursor))
                     print("Stopped during validation. Resume retries validation, without repeating training.", flush=True)
                     return
+                validation_report.update(evaluation_source=config["source"], checkpoint_epoch=epoch + 1)
+                write_json(output / "validation" / f"epoch_{epoch + 1:04d}" / "metrics.json", validation_report)
                 score = validation_report["overall"]["f1"]
                 score = -1. if score is None else score
                 if score > best or not (output / "best.pt").exists():
@@ -338,6 +349,10 @@ def parse_args():
     parser.add_argument("--threshold", type=float, default=.5)
     parser.add_argument("--eval-every", type=int, default=5)
     parser.add_argument("--eval-batch-size", type=int, default=4)
+    parser.add_argument("--eval-backend", choices=("eager", "cuda-graph"), default="eager",
+                        help="Execution backend only; keeps the same FPS draws, blocks and batch size")
+    parser.add_argument("--resume-evaluation-update", action="store_true",
+                        help="Explicit source migration from clean 4e7b7ae; retains all training state")
     parser.add_argument("--max-train-frames", type=int)
     parser.add_argument("--max-val-frames", type=int)
     parser.add_argument("--no-augment", action="store_true")

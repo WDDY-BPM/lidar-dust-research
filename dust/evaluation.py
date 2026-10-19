@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from pathlib import Path
+from time import perf_counter
 import zlib
 
 import numpy as np
@@ -10,6 +11,7 @@ import torch
 from dust.data import (IGNORE, KEEP_IDS, evaluation_blocks, features, finite_frame,
                        load_frame, write_json)
 from dust.metrics import confusion, summarize
+from dust.inference import InferenceForward
 
 
 class EvaluationInterrupted(InterruptedError):
@@ -45,7 +47,7 @@ def verify_records(root, records):
 
 
 def predict_frame(model, points, record, manifest, device, batch_size=4, seed=42,
-                  should_stop=None):
+                  should_stop=None, forward=None):
     if batch_size < 1:
         raise ValueError("Evaluation batch size must be positive")
     sums = np.zeros(len(points), dtype=np.float64)
@@ -61,14 +63,15 @@ def predict_frame(model, points, record, manifest, device, batch_size=4, seed=42
             raise EvaluationInterrupted("Validation interrupted; retry this validation on resume")
         array = np.stack([p[0] for p in pending])
         tensor = torch.from_numpy(array).transpose(1, 2).to(device)
-        log_probability, _ = model(tensor)
+        log_probability, _ = (model if forward is None else forward)(tensor)
         if not torch.isfinite(log_probability).all():
             raise RuntimeError("Non-finite model prediction, including ignored context points")
         scores = log_probability[:, :, 1].exp().cpu().numpy()
         for score, (_, indices, real_count) in zip(scores, pending):
             real = indices[:real_count]
-            np.add.at(sums, real, score[:real_count])
-            np.add.at(votes, real, 1)
+            # Real indices are unique within a block; padding is excluded.
+            sums[real] += score[:real_count]
+            votes[real] += 1
         pending.clear()
 
     devices = [device.index if device.index is not None else torch.cuda.current_device()] if device.type == "cuda" else []
@@ -138,10 +141,12 @@ def export_frame(directory, record, raw, labels, finite_index, target, scores, t
 
 
 def evaluate(model, root, manifest, records, device, threshold=.5, batch_size=4,
-             seed=42, output=None, export_per_sensor=0, should_stop=None):
+             seed=42, output=None, export_per_sensor=0, should_stop=None, backend="eager"):
     if not records or not 0 < threshold < 1 or export_per_sensor < 0:
         raise ValueError("Need frames, 0 < threshold < 1 and nonnegative export count")
     model.eval()
+    forward = InferenceForward(model, device, batch_size, backend)
+    clock = perf_counter()
     total = np.zeros(4, dtype=np.int64)
     no_dust = np.zeros(4, dtype=np.int64)
     by_sensor = defaultdict(lambda: np.zeros(4, dtype=np.int64))
@@ -150,20 +155,22 @@ def evaluate(model, root, manifest, records, device, threshold=.5, batch_size=4,
     exported = defaultdict(int)
     rows = []
     for i, record in enumerate(records):
+        frame_clock = perf_counter()
         if should_stop is not None and should_stop():
             raise EvaluationInterrupted("Validation interrupted")
         raw, labels = load_frame(root, record)
         points, target, original_index = finite_frame(raw, labels)
         probability, votes = predict_frame(model, points, record, manifest, device, batch_size, seed,
-                                           should_stop=should_stop)
+                                           should_stop=should_stop, forward=forward)
         counts = confusion(target, probability, threshold)
         total += counts
         by_sensor[record["sensor"]] += counts
         by_sequence[record["sequence"]] += counts
         if not np.any(target == 1):
             no_dust += counts
+        semantic = labels[original_index]
         for label in KEEP_IDS:
-            mask = labels[original_index] == label
+            mask = semantic == label
             by_class[str(label)][0] += int(mask.sum())
             by_class[str(label)][1] += int(np.sum(mask & (probability >= threshold)))
         rows.append({"path": record["path"], "sensor": record["sensor"],
@@ -178,9 +185,14 @@ def evaluate(model, root, manifest, records, device, threshold=.5, batch_size=4,
             export_frame(Path(output) / "visualizations", record, raw, labels,
                          original_index, target, probability, threshold)
             exported[record["sensor"]] += 1
-        print(f"Evaluated {i + 1}/{len(records)} {record['path']} F1={rows[-1]['f1']}", flush=True)
+        elapsed = perf_counter() - clock
+        eta = elapsed / (i + 1) * (len(records) - i - 1) / 60
+        print(f"Evaluated {i + 1}/{len(records)} {record['path']} F1={rows[-1]['f1']} "
+              f"s/frame={perf_counter() - frame_clock:.2f} validation_ETA_min={eta:.1f}", flush=True)
     report = {"manifest_fingerprint": manifest["fingerprint"], "threshold": threshold,
               "evaluation_seed": seed, "evaluation_batch_size": batch_size,
+              "inference_backend": backend, "inference": forward.statistics(),
+              "evaluation_seconds": perf_counter() - clock,
               "frames": len(records), "overall": summarize(total),
               "by_sensor": {k: summarize(v) for k, v in sorted(by_sensor.items())},
               "by_sequence": {k: summarize(v) for k, v in sorted(by_sequence.items())},

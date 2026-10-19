@@ -6,6 +6,8 @@ on:
     paths:
       - 'dust/**'
       - '*_dust.py'
+      - 'benchmark_validation.py'
+      - 'models/fps_control.py'
       - 'models/pointnet2*'
       - 'tests/test_dust*.py'
       - 'requirements-dust.txt'
@@ -14,6 +16,8 @@ on:
     paths:
       - 'dust/**'
       - '*_dust.py'
+      - 'benchmark_validation.py'
+      - 'models/fps_control.py'
       - 'models/pointnet2*'
       - 'tests/test_dust*.py'
       - 'requirements-dust.txt'

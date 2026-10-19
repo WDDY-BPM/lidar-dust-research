@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from time import time
 import numpy as np
+from models.fps_control import supplied_fps_start
 
 def timeit(tag, t):
     print("{}: {}s".format(tag, time() - t))
@@ -74,7 +75,9 @@ def farthest_point_sample(xyz, npoint):
     centroids = torch.zeros(B, npoint, dtype=torch.long, device=device)
     distance = torch.full((B, N), 1e10, device=device)
     # Keep the original CPU RNG draw so fixed seeds retain their FPS starts.
-    farthest = torch.randint(0, N, (B,), dtype=torch.long).to(device)
+    farthest = supplied_fps_start(B, N, device)
+    if farthest is None:
+        farthest = torch.randint(0, N, (B,), dtype=torch.long).to(device)
     batch_indices = torch.arange(B, dtype=torch.long, device=device)
     for i in range(npoint):
         centroids[:, i] = farthest
