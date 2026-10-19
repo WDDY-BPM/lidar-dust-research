@@ -112,3 +112,36 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Research data and generated artifacts (keep source and manifests in Git)
+/data/
+/datasets/
+/LidarDustX/
+/LiDARDustX/
+/GIMUN/
+/UCHILE-Dust/
+/log/
+/logs/
+/runs/
+/outputs/
+/checkpoints/
+/artifacts/
+*.bin
+*.label
+*.ply
+*.pcd
+*.npy
+*.npz
+*.pth
+*.pt
+*.ckpt
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.rar
+.env.*
+!.env.example
+*.pem
+*.key
+.aws/
