@@ -17,7 +17,7 @@ from dust.data import IGNORE, file_sha256, read_manifest, write_json
 from dust.dataset import DustDataset
 from dust.evaluation import EvaluationInterrupted, evaluate, select_frames, verify_records
 from dust.training import EpochBatchSampler, StopRequest, initialize_worker
-from dust.resume import validate_resume_config
+from dust.resume import validate_resume_config, validation_schedule
 from models.pointnet2_dust_msg import get_model
 
 
@@ -117,10 +117,11 @@ def train(args):
     init_path = getattr(args, "init_checkpoint", None)
     eval_backend = getattr(args, "eval_backend", "eager")
     evaluation_update = getattr(args, "resume_evaluation_update", False)
+    schedule_update = getattr(args, "resume_eval_schedule_update", False)
     if (save_every < 1 or log_every < 1 or cache_frames < 0 or prefetch < 1 or
             (stop_after is not None and stop_after < 1) or (args.resume and init_path)):
         raise ValueError("Invalid checkpoint/loader settings or conflicting resume/init options")
-    if eval_backend not in ("eager", "cuda-graph") or (evaluation_update and not args.resume):
+    if eval_backend not in ("eager", "cuda-graph") or ((evaluation_update or schedule_update) and not args.resume):
         raise ValueError("Invalid evaluation backend or evaluation update without --resume")
     manifest = read_manifest(args.manifest)
     output = Path(args.output)
@@ -167,7 +168,10 @@ def train(args):
             raise ValueError("Old checkpoint: use the original code to resume, or --init-checkpoint "
                              "in a NEW output directory to initialize weights with a fresh optimizer")
         config["initialization"] = checkpoint["config"].get("initialization")
-        resume_lineage = validate_resume_config(checkpoint, config, args.resume, evaluation_update)
+        resume_lineage = validate_resume_config(checkpoint, config, args.resume, evaluation_update, schedule_update)
+        if checkpoint["config"]["eval_every"] != config["eval_every"]:
+            print(f"Validation interval changed: {checkpoint['config']['eval_every']} -> {config['eval_every']}; "
+                  f"effective from epoch {checkpoint['next_epoch'] + 1}. Previous best is retained.", flush=True)
         model.load_state_dict(checkpoint["model_state"])
         optimizer.load_state_dict(checkpoint["optimizer_state"])
         scheduler.load_state_dict(checkpoint["scheduler_state"])
@@ -200,6 +204,7 @@ def train(args):
         print("Initialized model weights only; optimizer, scheduler, epoch and best F1 start fresh.", flush=True)
     write_json(output / "config.json", {**config, "epochs_requested": args.epochs,
                "eval_backend": eval_backend, "resume_lineage": resume_lineage,
+               "validation_schedule": validation_schedule(config, resume_lineage),
                "workers": args.workers, "cache_frames": cache_frames, "prefetch_factor": prefetch,
                "save_every_steps": save_every, "log_every": log_every,
                "device": str(device), "geometry": manifest["geometry"],
@@ -212,6 +217,7 @@ def train(args):
     print(f"Training frames={len(dataset.frames)}, samples/epoch={len(dataset)}, "
           f"batches/epoch={sampler.total_batches}, batch_size={args.batch_size}, "
           f"checkpoint every {save_every} steps", flush=True)
+    print(f"Full validation every {args.eval_every} epochs and at the final epoch; backend={eval_backend}", flush=True)
     invocation_steps = 0
     with StopRequest() as stop:
         for epoch in range(start, args.epochs):
@@ -239,6 +245,7 @@ def train(args):
                         "optimizer_state": optimizer.state_dict(), "scheduler_state": scheduler.state_dict(),
                         "rng_state": rng_state(generator), "manifest": manifest,
                         "eval_backend": eval_backend, "resume_lineage": resume_lineage,
+                        "validation_schedule": validation_schedule(config, resume_lineage),
                         "epoch_statistics": values if next_batch else [0., 0.],
                         "epoch_train_seconds": seconds_before + perf_counter() - epoch_clock if next_batch else 0.,
                         "history_row": history_row if row is None else row, "best_pending": best_pending}
@@ -307,7 +314,8 @@ def train(args):
                     atomic_checkpoint(output / "last.pt", snapshot(epoch, cursor))
                     print("Stopped during validation. Resume retries validation, without repeating training.", flush=True)
                     return
-                validation_report.update(evaluation_source=config["source"], checkpoint_epoch=epoch + 1)
+                validation_report.update(evaluation_source=config["source"], checkpoint_epoch=epoch + 1,
+                                         validation_schedule=validation_schedule(config, resume_lineage))
                 write_json(output / "validation" / f"epoch_{epoch + 1:04d}" / "metrics.json", validation_report)
                 score = validation_report["overall"]["f1"]
                 score = -1. if score is None else score
@@ -353,6 +361,8 @@ def parse_args():
                         help="Execution backend only; keeps the same FPS draws, blocks and batch size")
     parser.add_argument("--resume-evaluation-update", action="store_true",
                         help="Explicit source migration from clean 4e7b7ae; retains all training state")
+    parser.add_argument("--resume-eval-schedule-update", action="store_true",
+                        help="Explicit eval_every change from clean known source; preserves all training state")
     parser.add_argument("--max-train-frames", type=int)
     parser.add_argument("--max-val-frames", type=int)
     parser.add_argument("--no-augment", action="store_true")

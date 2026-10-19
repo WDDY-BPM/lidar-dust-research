@@ -8,6 +8,7 @@ import torch
 
 from dust.data import read_manifest, write_json
 from dust.evaluation import evaluate, select_frames, verify_records
+from dust.resume import validation_schedule
 from models.pointnet2_dust_msg import get_model
 from train_dust import device_for, seed_everything, source_version
 
@@ -43,6 +44,7 @@ def main(args):
                   training_config=config, training_budget_epochs=checkpoint["training_budget_epochs"],
                   is_smoke_run=config["is_smoke_run"] or args.max_frames is not None,
                   resume_lineage=checkpoint.get("resume_lineage", []),
+                  validation_schedule=validation_schedule(config, checkpoint.get("resume_lineage", [])),
                   evaluation_source=source_version(),
                   checkpoint_selection="validation F1 at checkpoint's fixed threshold")
     write_json(output / "metrics.json", report)

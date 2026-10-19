@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from dust.data import write_json
+from dust.resume import validation_schedule
 
 
 def summarize_runs(paths):
@@ -26,6 +27,10 @@ def summarize_runs(paths):
                       for r in reports]
     if any(c != configurations[0] for c in configurations):
         raise ValueError("Training configurations differ beyond the random seed")
+    schedules = [r.get("validation_schedule", validation_schedule(r["training_config"],
+                                                                 r.get("resume_lineage", []))) for r in reports]
+    if any(schedule != schedules[0] for schedule in schedules):
+        raise ValueError("Runs use incompatible validation schedule histories")
     result = {"seeds": seeds, "n_runs": len(reports),
               "manifest_fingerprint": reports[0]["manifest_fingerprint"],
               "threshold": reports[0]["threshold"], "metrics": {}}
