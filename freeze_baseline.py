@@ -9,6 +9,7 @@ import torch
 
 from dust.data import file_sha256, fingerprint, read_manifest, write_json
 from dust.grouping import CAPTURE_POLICY
+from dust.splitting import SPLIT_POLICY, split_quality
 from train_dust import source_version
 
 
@@ -19,18 +20,29 @@ SETTINGS = {"epochs": 100, "batch_size": 32, "workers": 4, "samples_per_frame": 
 GEOMETRY = {"npoint": 4096, "block_size": 10., "stride": 5., "coord_scale": 10.}
 
 
+def check_baseline_manifest(manifest):
+    if (manifest.get("preparation_protocol") != CAPTURE_POLICY or manifest["geometry"] != GEOMETRY
+            or manifest.get("split_protocol") != SPLIT_POLICY or manifest.get("split_seed") != 42
+            or any(abs(a - b) > 1e-8 for a, b in zip(manifest.get("requested_split_ratios", []), (.7, .15, .15)))
+            or len(manifest.get("requested_split_ratios", [])) != 3):
+        raise ValueError("Freeze requires the coverage-balanced v3 manifest, seed 42 and baseline geometry/ratios")
+    split_quality(manifest["frames"])
+
+
 def check_protocol(path):
     protocol = json.loads(Path(path).read_text(encoding="utf-8"))
     value = dict(protocol)
     digest = value.pop("fingerprint")
     if fingerprint(value) != digest:
         raise ValueError("Frozen protocol fingerprint mismatch")
-    if (protocol["version"] != 1 or protocol["settings"] != SETTINGS or protocol["seeds"] != [42, 43, 44]
+    if (protocol["version"] != 1 or protocol["name"] != "clean_msg_v3"
+            or protocol.get("split_policy") != SPLIT_POLICY
+            or protocol["settings"] != SETTINGS or protocol["seeds"] != [42, 43, 44]
             or protocol["source"] != source_version() or protocol["source"]["tracked_files_dirty"] is not False):
         raise ValueError("Use the exact clean frozen source/settings/seeds")
     manifest = read_manifest(protocol["manifest_path"])
-    if (manifest.get("preparation_protocol") != CAPTURE_POLICY or manifest["geometry"] != GEOMETRY
-            or manifest["fingerprint"] != protocol["manifest_fingerprint"]):
+    check_baseline_manifest(manifest)
+    if manifest["fingerprint"] != protocol["manifest_fingerprint"]:
         raise ValueError("Frozen manifest or capture policy changed")
     return protocol, manifest
 
@@ -94,8 +106,8 @@ PYTHON="${{PYTHON:-python}}"
 "$PYTHON" freeze_baseline.py --check "$PROTO"
 mkdir -p logs
 for seed in 42 43 44; do
-  run="runs/clean_msg_v2_seed${{seed}}"
-  out="outputs/clean_msg_v2_seed${{seed}}_test"
+  run="runs/clean_msg_v3_seed${{seed}}"
+  out="outputs/clean_msg_v3_seed${{seed}}_test"
   status=$("$PYTHON" freeze_baseline.py --check "$PROTO" --status-checkpoint "$run/last.pt" --seed "$seed")
   if [ "$status" != complete ]; then
     resume_args=()
@@ -103,7 +115,7 @@ for seed in 42 43 44; do
     CUDA_VISIBLE_DEVICES=0 "$PYTHON" -u train_dust.py \\
       --data-root "$DATA_ROOT" --manifest "$MANIFEST" --output "$run" --seed "$seed" \\
       {flags} \\
-      "${{resume_args[@]}}" 2>&1 | tee -i -a "logs/clean_msg_v2_seed${{seed}}.log"
+      "${{resume_args[@]}}" 2>&1 | tee -i -a "logs/clean_msg_v3_seed${{seed}}.log"
     status=$("$PYTHON" freeze_baseline.py --check "$PROTO" --status-checkpoint "$run/last.pt" --seed "$seed")
     if [ "$status" != complete ]; then echo "Training paused; rerun to resume."; exit 0; fi
   fi
@@ -116,14 +128,14 @@ for seed in 42 43 44; do
     CUDA_VISIBLE_DEVICES=0 "$PYTHON" -u evaluate_dust.py \\
       --data-root "$DATA_ROOT" --manifest "$MANIFEST" --checkpoint "$run/best.pt" \\
       --split test --backend cuda-graph --visualize-per-sensor 1 --output "$out" \\
-      2>&1 | tee -i -a "logs/clean_msg_v2_seed${{seed}}_test.log"
+      2>&1 | tee -i -a "logs/clean_msg_v3_seed${{seed}}_test.log"
   fi
 done
 "$PYTHON" summarize_dust.py \\
-  outputs/clean_msg_v2_seed42_test/metrics.json \\
-  outputs/clean_msg_v2_seed43_test/metrics.json \\
-  outputs/clean_msg_v2_seed44_test/metrics.json \\
-  --output outputs/clean_msg_v2_three_seed_summary.json
+  outputs/clean_msg_v3_seed42_test/metrics.json \\
+  outputs/clean_msg_v3_seed43_test/metrics.json \\
+  outputs/clean_msg_v3_seed44_test/metrics.json \\
+  --output outputs/clean_msg_v3_three_seed_summary.json
 '''
 
 
@@ -134,17 +146,18 @@ def freeze(args):
     manifest = read_manifest(args.manifest)
     diagnostic = json.loads(Path(args.diagnostics).read_text(encoding="utf-8"))
     source = source_version()
-    if (manifest.get("preparation_protocol") != CAPTURE_POLICY or manifest["geometry"] != GEOMETRY
-            or source["tracked_files_dirty"] is not False or not source["commit"]):
+    check_baseline_manifest(manifest)
+    if source["tracked_files_dirty"] is not False or not source["commit"]:
         raise ValueError("Freeze requires the clean repaired manifest, baseline geometry and committed source")
     if (not diagnostic.get("is_diagnostic") or not diagnostic.get("all_review_predictions_available")
             or not diagnostic.get("all_review_confusions_match")
             or not any(case.get("selected_points", 0) > 0 for case in diagnostic.get("cases", []))
             or diagnostic.get("input_fingerprint") != manifest.get("input_fingerprint")):
         raise ValueError("Run matching legacy failure diagnostics with per-point review before freezing")
-    protocol = {"version": 1, "name": "clean_msg_v2", "source": source,
+    protocol = {"version": 1, "name": "clean_msg_v3", "source": source,
                 "manifest_path": str(Path(args.manifest).resolve()), "manifest_fingerprint": manifest["fingerprint"],
                 "input_fingerprint": manifest["input_fingerprint"], "capture_policy": CAPTURE_POLICY,
+                "split_policy": SPLIT_POLICY,
                 "diagnostic_sha256": file_sha256(args.diagnostics), "seeds": [42, 43, 44], "settings": SETTINGS,
                 "selection": "maximum full validation F1 at fixed 0.5; every 10 epochs and final epoch",
                 "scope": "repaired acquisition-day-disjoint binary baseline; no physical-site generalization claim",

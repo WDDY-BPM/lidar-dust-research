@@ -163,7 +163,8 @@ class BaselineTests(unittest.TestCase):
                 read_manifest(artifacts / "tampered.json")
 
     def test_same_capture_stays_together(self):
-        records = [{"sensor": sensor, "group": f"capture_{capture}"}
+        records = [{"sensor": sensor, "group": f"capture_{capture}", "class_counts": [1, 1],
+                    "finite_semantic_counts": [int(i in (1, 9)) for i in range(29)]}
                    for capture in range(10) for sensor in ("a", "b")]
         splits = assign_splits(records, 42, (.7, .15, .15))
         self.assertEqual(splits, assign_splits(records, 42, (.7, .15, .15)))

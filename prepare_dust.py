@@ -12,36 +12,12 @@ import numpy as np
 from dust.data import (LABEL_PROTOCOL, binary_labels, file_sha256, fingerprint,
                        load_frame, validate_geometry, write_json)
 from dust.grouping import CAPTURE_POLICY, repair_capture_records, write_capture_reports
+from dust.splitting import SPLIT_POLICY, allocate_splits
 
 
 def assign_splits(records, seed, ratios):
-    """Stratify capture groups by sensor composition, never individual frames."""
-    groups = defaultdict(list)
-    for record in records:
-        groups[record["group"]].append(record)
-    strata = defaultdict(list)
-    for name, frames in groups.items():
-        strata[tuple(sorted({r["sensor"] for r in frames}))].append(name)
-    rng = np.random.default_rng(seed)
-    result, assigned = {}, np.zeros(3, dtype=np.int64)
-    for signature in sorted(strata):
-        names = list(rng.permutation(sorted(strata[signature])))
-        n = len(names)
-        if n >= 3:
-            n_train = min(n - 2, max(1, round(n * ratios[0])))
-            n_val = min(n - n_train - 1, max(1, round(n * ratios[1])))
-            slots = [0] * n_train + [1] * n_val + [2] * (n - n_train - n_val)
-        else:
-            slots = []
-            for _ in names:
-                slot = int(np.argmin((assigned + 1) / np.asarray(ratios)))
-                slots.append(slot)
-                assigned[slot] += 1
-        for name, slot in zip(names, slots):
-            result[name] = ("train", "val", "test")[slot]
-        if n >= 3:
-            assigned += np.bincount(slots, minlength=3)
-    return result
+    """Compatibility entry point for the coverage-constrained frame/point allocator."""
+    return allocate_splits(records, seed, ratios)[0]
 
 
 def group_mapping(path):
@@ -110,7 +86,7 @@ def prepare(args):
     input_fingerprint = fingerprint([{k: r[k] for k in ("path", "point_sha256", "label_sha256")}
                                      for r in records])
     records, capture_report = repair_capture_records(records, mapping)
-    splits = assign_splits(records, args.seed, ratios)
+    splits, split_quality = allocate_splits(records, args.seed, ratios)
     for record in records:
         record["split"] = splits[record["group"]]
     sensors = sorted(histograms)
@@ -151,9 +127,10 @@ def prepare(args):
     weights = 1 / np.sqrt(counts)
     weights /= weights.mean()
     manifest = {"version": 1, "dataset": "LiDARDustX", "split_seed": args.seed,
-                "split_ratios_by_group": list(ratios), "labels": LABEL_PROTOCOL,
+                "requested_split_ratios": list(ratios), "labels": LABEL_PROTOCOL,
                 "grouping": "capture_day_components_with_user_map" if mapping is not None else "capture_day_components",
                 "preparation_protocol": CAPTURE_POLICY,
+                "split_protocol": SPLIT_POLICY,
                 "input_fingerprint": input_fingerprint,
                 "group_map_sha256": file_sha256(args.group_map) if mapping is not None else None,
                 "geometry": geometry, "intensity_transform": "log1p(max(intensity,0)); training_sensor_zscore",
@@ -162,9 +139,11 @@ def prepare(args):
     output.mkdir(parents=True, exist_ok=True)
     write_json(output / "manifest.json", manifest)
     write_capture_reports(output, capture_report)
+    write_json(output / "split_quality.json", split_quality)
     write_json(output / "audit.json", {"frames": len(records), "splits": split_report,
                "input_frames": input_frames, "excluded_frames": capture_report["excluded_frames"],
                "preparation_protocol": CAPTURE_POLICY,
+               "split_quality": split_quality,
                "duplicate_point_groups": capture_report["duplicate_point_groups"],
                "conflicting_label_groups": capture_report["conflicting_label_groups"],
                "exclusion_reason_counts": capture_report["exclusion_reason_counts"],
