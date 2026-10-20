@@ -1,0 +1,3 @@
+# Install the appropriate torch==2.5.1 CPU/CUDA wheel separately; see BASELINE.md.
+numpy==1.26.4
+scipy==1.14.1
