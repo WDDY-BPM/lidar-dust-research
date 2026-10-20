@@ -6,7 +6,7 @@ from pathlib import Path
 
 import torch
 
-from dust.data import read_manifest, write_json
+from dust.data import file_sha256, read_manifest, write_json
 from dust.evaluation import evaluate, select_frames, verify_records
 from dust.resume import validation_schedule
 from models.pointnet2_dust_msg import get_model
@@ -46,6 +46,7 @@ def main(args):
                   resume_lineage=checkpoint.get("resume_lineage", []),
                   validation_schedule=validation_schedule(config, checkpoint.get("resume_lineage", [])),
                   evaluation_source=source_version(),
+                  checkpoint_sha256=file_sha256(args.checkpoint),
                   checkpoint_selection="validation F1 at checkpoint's fixed threshold")
     write_json(output / "metrics.json", report)
     print(json.dumps(report["overall"], indent=2), flush=True)

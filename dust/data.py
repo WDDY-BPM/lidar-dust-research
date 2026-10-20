@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 
 import numpy as np
+from dust.grouping import CAPTURE_POLICY, assert_clean_capture_records
 
 IGNORE = -100
 KEEP_IDS = tuple(range(1, 9)) + tuple(range(12, 25)) + (26, 27, 28)
@@ -94,6 +95,10 @@ def read_manifest(path):
     if manifest["version"] != 1 or manifest["labels"] != LABEL_PROTOCOL:
         raise ValueError("Unsupported manifest/label protocol")
     validate_geometry(manifest["geometry"])
+    if "preparation_protocol" in manifest:
+        if manifest["preparation_protocol"] != CAPTURE_POLICY:
+            raise ValueError("Unsupported preparation protocol")
+        assert_clean_capture_records(manifest["frames"], manifest.get("group_map_sha256") is not None)
     seen_paths, group_splits = set(), {}
     for record in manifest["frames"]:
         if record["path"] in seen_paths or record["split"] not in ("train", "val", "test"):

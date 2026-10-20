@@ -2,6 +2,8 @@
 
 本版实现我们约定的粉尘过滤基线：XYZI 输入，逐点预测有效点与粉尘，输出 F1、误删率和 PLY 可视化。它是基于 yanx27 源码的实验协议，未声称复现某篇论文的官方训练配置或指标。结构预测、保护损失和修复模块留到后续阶段。
 
+修正后的实验入口见 [CLEAN_BASELINE.md](CLEAN_BASELINE.md)。新版 `prepare_dust.py` 默认执行采集日分组、重复帧去重和冲突标签/异常时钟隔离；旧的 `sequence_only` 结果只保留作初步实验与故障定位。
+
 更新：分支 `fix/msg-throughput-resume` 提供 FPS/邻域查询优化、短时吞吐量比较、轮内检查点及安全停止。AutoDL 离线更新、现有 `mc` 环境和断点重训命令见 [PERFORMANCE.md](PERFORMANCE.md)。本页保留第一版操作示例；新版恢复语义以下文更新及 PERFORMANCE.md 为准。
 
 以下命令全部在实验服务器运行。本机不运行训练、推理或实验性预处理。GitHub 自动检查使用合成数据验证软件逻辑，不下载真实数据集。

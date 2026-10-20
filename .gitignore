@@ -113,7 +113,7 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# Research data and generated artifacts (keep source and manifests in Git)
+# Research data and generated artifacts (source stays in Git)
 /data/
 /datasets/
 /LidarDustX/
@@ -126,6 +126,8 @@ dmypy.json
 /outputs/
 /checkpoints/
 /artifacts/
+/audits/
+/protocols/
 *.bin
 *.label
 *.ply

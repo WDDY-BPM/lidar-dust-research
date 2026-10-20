@@ -11,6 +11,7 @@ import numpy as np
 
 from dust.data import (LABEL_PROTOCOL, binary_labels, file_sha256, fingerprint,
                        load_frame, validate_geometry, write_json)
+from dust.grouping import CAPTURE_POLICY, repair_capture_records, write_capture_reports
 
 
 def assign_splits(records, seed, ratios):
@@ -94,6 +95,7 @@ def prepare(args):
         record.update(n_raw=len(labels), n_finite=int(finite.sum()),
                       n_nonfinite=int((~finite).sum()),
                       n_ignored_finite=int(np.sum(target == -100)), class_counts=counts,
+                      finite_semantic_counts=np.bincount(labels[finite], minlength=29).tolist(),
                       n_negative_intensity=int(np.sum(points[finite, 3] < 0)),
                       nonfinite_label_counts=np.bincount(labels[~finite], minlength=29).tolist(),
                       point_sha256=file_sha256(path),
@@ -104,6 +106,10 @@ def prepare(args):
             print(f"Audited {i + 1}/{len(paths)} frames", flush=True)
     if mapping is not None and set(mapping) != {r["sequence"] for r in records}:
         raise ValueError("Group map must describe exactly the dataset's sequences")
+    input_frames = len(records)
+    input_fingerprint = fingerprint([{k: r[k] for k in ("path", "point_sha256", "label_sha256")}
+                                     for r in records])
+    records, capture_report = repair_capture_records(records, mapping)
     splits = assign_splits(records, args.seed, ratios)
     for record in records:
         record["split"] = splits[record["group"]]
@@ -146,24 +152,36 @@ def prepare(args):
     weights /= weights.mean()
     manifest = {"version": 1, "dataset": "LiDARDustX", "split_seed": args.seed,
                 "split_ratios_by_group": list(ratios), "labels": LABEL_PROTOCOL,
-                "grouping": "user_capture_map" if mapping is not None else "sequence_only",
+                "grouping": "capture_day_components_with_user_map" if mapping is not None else "capture_day_components",
+                "preparation_protocol": CAPTURE_POLICY,
+                "input_fingerprint": input_fingerprint,
                 "group_map_sha256": file_sha256(args.group_map) if mapping is not None else None,
                 "geometry": geometry, "intensity_transform": "log1p(max(intensity,0)); training_sensor_zscore",
                 "intensity": intensity, "class_weights": weights.tolist(), "frames": records}
     manifest["fingerprint"] = fingerprint(manifest)
     output.mkdir(parents=True, exist_ok=True)
     write_json(output / "manifest.json", manifest)
+    write_capture_reports(output, capture_report)
     write_json(output / "audit.json", {"frames": len(records), "splits": split_report,
+               "input_frames": input_frames, "excluded_frames": capture_report["excluded_frames"],
+               "preparation_protocol": CAPTURE_POLICY,
+               "duplicate_point_groups": capture_report["duplicate_point_groups"],
+               "conflicting_label_groups": capture_report["conflicting_label_groups"],
+               "exclusion_reason_counts": capture_report["exclusion_reason_counts"],
+               "finite_semantic_histogram_by_split_sensor": {
+                   split: {sensor: np.sum([r["finite_semantic_counts"] for r in records
+                                           if r["split"] == split and r["sensor"] == sensor], axis=0).tolist()
+                           for sensor in sensors} for split in ("train", "val", "test")},
                "raw_label_histogram_by_sensor": {s: h.tolist() for s, h in histograms.items()},
                "nonfinite_points": sum(r["n_nonfinite"] for r in records),
                "label_alignment": "count and shared index verified; semantic alignment requires visual review",
-               "grouping_caveat": "Verify related scenes across sequences before claiming cross-scene generalization"})
+               "grouping_caveat": CAPTURE_POLICY["claim"]})
     for split in ("train", "val", "test"):
         (output / f"{split}.txt").write_text("".join(r["path"] + "\n" for r in records
                                                     if r["split"] == split), encoding="utf-8")
     print(json.dumps(split_report, indent=2), flush=True)
-    if mapping is None:
-        print("Sequence-only split: review same-scene/synchronous captures before formal experiments.")
+    print(f"Clean capture policy: retained {len(records)}/{input_frames}; "
+          f"excluded {capture_report['excluded_frames']}. {CAPTURE_POLICY['claim']}", flush=True)
     return manifest
 
 

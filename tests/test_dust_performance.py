@@ -64,7 +64,7 @@ class PerformanceTests(unittest.TestCase):
             folder = root / sensor
             folder.mkdir(parents=True)
             for sequence in range(base, base + 3):
-                frame = folder / f"sequence_{sequence:04d}_{sensor}_0001_100_000.bin"
+                frame = folder / f"sequence_{sequence:04d}_{sensor}_0001_{1609459200 + sequence * 86400}_000.bin"
                 np.array([[0, 0, 0, 2], [1, 1, 1, 3 + sequence], [2, 2, 0, 7],
                           [np.nan, 0, 0, 0]], dtype="<f4").tofile(frame)
                 np.array([1, 9, 25, 0], dtype=np.uint8).tofile(frame.with_suffix(".label"))
