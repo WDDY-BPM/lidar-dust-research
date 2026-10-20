@@ -79,9 +79,6 @@ python -u prepare_dust.py \
 已完成的三个旧诊断报告继续保留；本次只需传回下面新增的 v3 `audit.json` 与 `split_quality.json`，检查新划分后再进入长时间训练：
 
 ```text
-audits/legacy_seed42_review/summary.json
-audits/legacy_seed42_review/label_inventory.json
-audits/legacy_seed42_review/duplicate_label_differences.json
 artifacts/lidardustx_clean_v3/audit.json
 artifacts/lidardustx_clean_v3/split_quality.json
 ```
